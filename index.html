@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trombino — Base de données de doublage</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 20px 32px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; flex-wrap: wrap; gap: 12px; }
+  header h1 { font-size: 1.3rem; font-weight: 700; color: #c084fc; letter-spacing: -0.02em; }
+  header .subtitle { font-size: 0.8rem; color: #64748b; }
+  .search-bar { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #searchInput { width: 300px; padding: 10px 16px; border-radius: 8px; border: 1px solid #2d3148; background: #0f1117; color: #e2e8f0; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
+  #searchInput:focus { border-color: #c084fc; }
+  #searchInput::placeholder { color: #475569; }
+  .filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab { padding: 6px 14px; border-radius: 6px; border: 1px solid #2d3148; background: transparent; color: #94a3b8; font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
+  .tab.active { background: #c084fc22; border-color: #c084fc; color: #c084fc; }
+  main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
+  #status { text-align: center; color: #64748b; padding: 60px 0; font-size: 0.9rem; }
+  #status .loader { width: 36px; height: 36px; border: 3px solid #2d3148; border-top-color: #c084fc; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #resultCount { font-size: 0.8rem; color: #475569; margin-bottom: 20px; }
+  .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+  .card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 12px; overflow: hidden; transition: border-color 0.2s, transform 0.15s; cursor: pointer; }
+  .card:hover { border-color: #c084fc55; transform: translateY(-2px); }
+  .card-photo { width: 100%; aspect-ratio: 4/3; object-fit: cover; background: #0f1117; display: block; }
+  .card-photo-placeholder { width: 100%; aspect-ratio: 4/3; background: #0f1117; display: flex; align-items: center; justify-content: center; color: #2d3148; font-size: 2.5rem; }
+  .card-body { padding: 12px; }
+  .card-actor { font-weight: 600; font-size: 0.88rem; color: #f1f5f9; margin-bottom: 5px; line-height: 1.3; }
+  .card-dubber { font-size: 0.76rem; color: #a78bfa; margin-bottom: 3px; }
+  .card-project { font-size: 0.7rem; color: #64748b; line-height: 1.3; }
+  .badge-narrator { display: inline-block; font-size: 0.65rem; padding: 2px 7px; border-radius: 4px; background: #1e3a5f; color: #60a5fa; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: #00000090; z-index: 200; align-items: center; justify-content: center; padding: 24px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 16px; max-width: 520px; width: 100%; overflow: hidden; animation: fadeIn 0.15s ease; max-height: 90vh; overflow-y: auto; }
+  @keyframes fadeIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+  .modal-photo { width: 100%; max-height: 260px; object-fit: cover; display: block; background: #0f1117; }
+  .modal-body { padding: 22px; }
+  .modal-actor { font-size: 1.2rem; font-weight: 700; color: #f1f5f9; margin-bottom: 16px; }
+  .modal-table { width: 100%; border-collapse: collapse; }
+  .modal-table th { text-align: left; font-size: 0.7rem; color: #475569; text-transform: uppercase; letter-spacing: 0.07em; padding: 0 0 8px 0; border-bottom: 1px solid #2d3148; }
+  .modal-table td { padding: 10px 0; font-size: 0.83rem; border-bottom: 1px solid #1e2235; vertical-align: top; }
+  .modal-table td:first-child { color: #a78bfa; padding-right: 16px; width: 42%; }
+  .modal-table td:last-child { color: #94a3b8; }
+  .modal-table tr:last-child td { border-bottom: none; }
+  .modal-close-wrap { display: flex; justify-content: flex-end; padding: 12px 14px 0; }
+  .modal-close { width: 30px; height: 30px; border-radius: 50%; background: #0f1117; border: 1px solid #2d3148; color: #94a3b8; font-size: 0.9rem; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .no-results { color: #475569; text-align: center; padding: 60px 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Trombino</h1>
+    <div class="subtitle">Base de données de doublage</div>
+  </div>
+  <div class="search-bar">
+    <div class="filter-tabs">
+      <button class="tab active" data-mode="all">Tout</button>
+      <button class="tab" data-mode="acteur">Acteur original</button>
+      <button class="tab" data-mode="doubleur">Doubleur</button>
+      <button class="tab" data-mode="projet">Projet</button>
+      <button class="tab" data-mode="narrateur">Narrateur</button>
+    </div>
+    <input type="text" id="searchInput" placeholder="Rechercher…" autocomplete="off">
+  </div>
+</header>
+
+<main>
+  <div id="status">
+    <div class="loader"></div>
+    Chargement de la base de données…
+  </div>
+  <div id="resultCount" style="display:none"></div>
+  <div class="results-grid" id="results"></div>
+</main>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modal">
+    <div class="modal-close-wrap"><button class="modal-close" id="modalClose">✕</button></div>
+    <img class="modal-photo" id="modalPhoto" src="" alt="" style="display:none">
+    <div class="modal-body">
+      <div class="modal-actor" id="modalActor"></div>
+      <table class="modal-table">
+        <thead><tr><th>Doubleur·se</th><th>Projet</th></tr></thead>
+        <tbody id="modalRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let DB = null;
+let searchMode = 'all';
+let searchTimer = null;
+
+initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` }).then(SQL => {
+  fetch('trombino.db')
+    .then(r => { if (!r.ok) throw new Error('Fichier trombino.db introuvable'); return r.arrayBuffer(); })
+    .then(buf => {
+      DB = new SQL.Database(new Uint8Array(buf));
+      document.getElementById('status').style.display = 'none';
+      document.getElementById('resultCount').style.display = 'block';
+      renderResults('');
+    })
+    .catch(err => {
+      document.getElementById('status').innerHTML =
+        `<p style="color:#f87171">Erreur : ${err.message}</p>
+         <p style="color:#64748b;margin-top:8px;font-size:0.8rem">Assurez-vous que trombino.db et le dossier images/ sont dans le même répertoire que index.html, et ouvrez via un serveur local ou GitHub Pages.</p>`;
+    });
+});
+
+document.getElementById('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => renderResults(e.target.value.trim()), 220);
+});
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    searchMode = tab.dataset.mode;
+    renderResults(document.getElementById('searchInput').value.trim());
+  });
+});
+
+function renderResults(query) {
+  if (!DB) return;
+  const container = document.getElementById('results');
+  const countEl   = document.getElementById('resultCount');
+  container.innerHTML = '';
+
+  const like = `%${query}%`;
+
+  if (searchMode === 'narrateur') {
+    const sql = query
+      ? `SELECT d.nom, p.titre FROM doublages dob JOIN doubleurs d ON d.id=dob.doubleur_id JOIN projets p ON p.id=dob.projet_id WHERE dob.est_narrateur=1 AND (d.nom LIKE ? OR p.titre LIKE ?) ORDER BY p.titre COLLATE NOCASE LIMIT 300`
+      : `SELECT d.nom, p.titre FROM doublages dob JOIN doubleurs d ON d.id=dob.doubleur_id JOIN projets p ON p.id=dob.projet_id WHERE dob.est_narrateur=1 ORDER BY p.titre COLLATE NOCASE LIMIT 300`;
+    const result = query ? DB.exec(sql, [like, like])[0] : DB.exec(sql)[0];
+    if (!result || !result.values.length) { countEl.textContent = '0 résultat'; container.innerHTML = '<div class="no-results">Aucun résultat</div>'; return; }
+    countEl.textContent = `${result.values.length} entrée(s) narrateur`;
+    result.values.forEach(([doubleur, projet]) => container.appendChild(makeNarrCard(doubleur, projet)));
+    return;
+  }
+
+  let where, params;
+  if (!query) {
+    where = 'WHERE dob.est_narrateur=0'; params = [];
+  } else if (searchMode === 'acteur') {
+    where = 'WHERE dob.est_narrateur=0 AND a.nom LIKE ?'; params = [like];
+  } else if (searchMode === 'doubleur') {
+    where = 'WHERE dob.est_narrateur=0 AND d.nom LIKE ?'; params = [like];
+  } else if (searchMode === 'projet') {
+    where = 'WHERE dob.est_narrateur=0 AND p.titre LIKE ?'; params = [like];
+  } else {
+    where = 'WHERE dob.est_narrateur=0 AND (a.nom LIKE ? OR d.nom LIKE ? OR p.titre LIKE ?)'; params = [like, like, like];
+  }
+
+  const sql = `
+    SELECT a.id, a.nom, a.photo,
+           GROUP_CONCAT(d.nom, '||') as doubleurs,
+           GROUP_CONCAT(p.titre, '||') as projets
+    FROM doublages dob
+    JOIN acteurs a ON a.id=dob.acteur_id
+    JOIN doubleurs d ON d.id=dob.doubleur_id
+    JOIN projets p ON p.id=dob.projet_id
+    ${where}
+    GROUP BY a.id
+    ORDER BY a.nom COLLATE NOCASE
+    LIMIT 400`;
+
+  const result = DB.exec(sql, params)[0];
+  if (!result || !result.values.length) {
+    countEl.textContent = '0 résultat';
+    container.innerHTML = '<div class="no-results">Aucun résultat</div>';
+    return;
+  }
+  countEl.textContent = `${result.values.length} acteur(s) trouvé(s)`;
+  result.values.forEach(r => container.appendChild(makeActorCard(r)));
+}
+
+function makeActorCard([id, nom, photo, doubleurs, projets]) {
+  const dl = doubleurs ? doubleurs.split('||') : [];
+  const pl = projets   ? projets.split('||')   : [];
+  const card = document.createElement('div');
+  card.className = 'card';
+  const extra = dl.length > 1 ? ` <span style="color:#475569;font-size:0.7rem">+${dl.length-1}</span>` : '';
+  card.innerHTML = `
+    ${photo ? `<img class="card-photo" src="${photo}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'card-photo-placeholder\\'>👤</div>'">` : '<div class="card-photo-placeholder">👤</div>'}
+    <div class="card-body">
+      <div class="card-actor">${esc(nom)}</div>
+      <div class="card-dubber">${esc(dl[0]||'—')}${extra}</div>
+      <div class="card-project">${esc(pl[0]||'—')}</div>
+    </div>`;
+  card.addEventListener('click', () => openModal(nom, photo, dl, pl));
+  return card;
+}
+
+function makeNarrCard(doubleur, projet) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="card-photo-placeholder">🎙️</div>
+    <div class="card-body">
+      <span class="badge-narrator">Narrateur</span>
+      <div class="card-actor">${esc(projet||'—')}</div>
+      <div class="card-dubber">${esc(doubleur||'—')}</div>
+    </div>`;
+  return card;
+}
+
+function openModal(nom, photo, doubleurs, projets) {
+  document.getElementById('modalActor').textContent = nom;
+  const photoEl = document.getElementById('modalPhoto');
+  if (photo) {
+    photoEl.src = photo; photoEl.style.display = 'block';
+    photoEl.onerror = () => { photoEl.style.display = 'none'; };
+  } else { photoEl.style.display = 'none'; }
+  const tbody = document.getElementById('modalRows');
+  tbody.innerHTML = '';
+  doubleurs.forEach((d, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(d)}</td><td>${esc(projets[i]||'—')}</td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+document.getElementById('modalOverlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modalOverlay')) closeModal();
+});
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.addEventListener('keydown', e => { if (e.key==='Escape') closeModal(); });
+
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
